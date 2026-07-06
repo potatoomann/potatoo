@@ -43,15 +43,19 @@ echo -e "  ${CYAN}[*]${RESET} Potatoo directory: ${SCRIPT_DIR}"
 
 # ─── Install Python dependencies ──────────────────────────────────────────────
 echo -e "  ${CYAN}[*]${RESET} Installing Python dependencies..."
-if command -v pip3 &> /dev/null; then
-    pip3 install -r "${SCRIPT_DIR}/requirements.txt" --quiet
-elif command -v pip &> /dev/null; then
-    pip install -r "${SCRIPT_DIR}/requirements.txt" --quiet
+# Try apt first (cleanest for Kali/Debian)
+if apt-get install -y python3-requests python3-urllib3 -qq 2>/dev/null; then
+    echo -e "  ${GREEN}[ok]${RESET} Dependencies installed via apt"
+elif pip3 install -r "${SCRIPT_DIR}/requirements.txt" --break-system-packages --quiet 2>/dev/null; then
+    echo -e "  ${GREEN}[ok]${RESET} Dependencies installed via pip"
+elif pip3 install -r "${SCRIPT_DIR}/requirements.txt" --quiet 2>/dev/null; then
+    echo -e "  ${GREEN}[ok]${RESET} Dependencies installed via pip"
+elif pip install -r "${SCRIPT_DIR}/requirements.txt" --break-system-packages --quiet 2>/dev/null; then
+    echo -e "  ${GREEN}[ok]${RESET} Dependencies installed via pip"
 else
-    echo -e "  ${RED}[✗]${RESET} pip not found. Install pip first: sudo apt install python3-pip"
+    echo -e "  ${RED}[x]${RESET} pip not found. Run: sudo apt install python3-pip python3-requests"
     exit 1
 fi
-echo -e "  ${GREEN}[✓]${RESET} Dependencies installed"
 
 # ─── Create launcher script ───────────────────────────────────────────────────
 echo -e "  ${CYAN}[*]${RESET} Creating launcher..."
