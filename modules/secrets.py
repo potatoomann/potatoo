@@ -1,10 +1,15 @@
 """
 Potatoo — Secret Detection Module
 API keys, cloud credentials, private keys, hardcoded passwords, .env exposure
+All findings auto-validated via entropy analysis before reporting.
 """
 
 import re
 from typing import List, Dict
+
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from core.validator import Validator
 
 
 # ─── Secret Patterns ───────────────────────────────────────────────────────────
@@ -83,6 +88,7 @@ class SecretDetector:
         self.log        = logger
         self.reporter   = reporter
         self.session    = session
+        self.validator  = Validator(session, rate_limiter, logger)
 
     def run(self, urls: List[str], js_files: List[str]) -> None:
         self.log.module_start("Secret Detection")
@@ -162,17 +168,23 @@ class SecretDetector:
                 if match_str in ("0000000000000000", "1234567890abcdef"):
                     continue
 
+                # Validate secret is real (entropy + format check)
+                confirmed, val_evidence = self.validator.confirm_secret(name, match_str)
+                if not confirmed:
+                    self.log.debug(f"Secret skipped (low confidence): {name} — {val_evidence}")
+                    continue
+
                 self.reporter.add_finding(
                     title=f"Secret Exposed: {name}",
                     severity=severity,
                     url=url,
-                    description=f"A potential {name} was found in the response.",
-                    evidence=f"Pattern match: {match_str}",
+                    description=f"A confirmed {name} was found in the response (validated by entropy analysis).",
+                    evidence=f"Match: {match_str}\nValidation: {val_evidence}",
                     remediation=f"Remove '{name}' from source code/responses. Rotate the credential immediately. Use environment variables or secret managers.",
                     module="secrets",
                     cvss=9.1 if severity == "CRITICAL" else 7.5 if severity == "HIGH" else 5.0,
                 )
                 found.append({"title": f"Secret: {name}", "severity": severity})
-                self.log.finding(severity, f"Secret found: {name}", url)
+                self.log.finding(severity, f"Secret confirmed: {name}", url)
 
         return found

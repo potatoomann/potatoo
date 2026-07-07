@@ -1,12 +1,17 @@
 """
 Potatoo — Injection Attacks Module
 SQLi, XSS, SSTI, SSRF, Open Redirect, Command Injection, XXE
+All findings are auto-validated before reporting.
 """
 
 import re
 import time
 import urllib.parse
 from typing import List, Dict, Any
+
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from core.validator import Validator
 
 
 # ─── Payloads ──────────────────────────────────────────────────────────────────
@@ -126,6 +131,7 @@ class InjectionScanner:
         self.log        = logger
         self.reporter   = reporter
         self.session    = session
+        self.validator  = Validator(session, rate_limiter, logger)
 
     def run(self, urls: List[str], forms: List[Dict], params: List[str]) -> None:
         self.log.module_start("Injection Testing")
@@ -170,14 +176,17 @@ class InjectionScanner:
 
                     for err_pattern in SQLI_ERRORS:
                         if re.search(err_pattern, resp.text, re.IGNORECASE):
-                            self.reporter.add_finding(
-                                title="SQL Injection (Error-Based)",
-                                severity="CRITICAL",
-                                url=test_url,
-                                description=f"Parameter '{param}' is vulnerable to SQL injection. Database error was triggered.",
-                                evidence=f"Payload: {payload}\nError pattern matched: {err_pattern}",
-                                remediation="Use parameterized queries / prepared statements. Never concatenate user input into SQL.",
-                                module="injections",
+                            # Auto-confirm before reporting
+                            confirmed, evidence = self.validator.confirm_sqli(url, param)
+                            if confirmed:
+                                self.reporter.add_finding(
+                                    title="SQL Injection (Confirmed)",
+                                    severity="CRITICAL",
+                                    url=test_url,
+                                    description=f"Parameter '{param}' is confirmed vulnerable to SQL injection.",
+                                    evidence=evidence,
+                                    remediation="Use parameterized queries / prepared statements.",
+                                    module="injections",
                                 cvss=9.8,
                             )
                             self.log.finding("CRITICAL", f"SQLi found in: {url}", f"param={param}")

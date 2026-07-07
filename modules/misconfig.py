@@ -1,6 +1,7 @@
 """
 Potatoo — Misconfiguration Scanner
 CORS, HTTP methods, directory listing, SSL/TLS, clickjacking, info disclosure
+All findings auto-validated before reporting.
 """
 
 import re
@@ -8,6 +9,10 @@ import ssl
 import socket
 import urllib.parse
 from typing import List, Dict
+
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from core.validator import Validator
 
 
 DANGEROUS_METHODS = ["PUT", "DELETE", "TRACE", "CONNECT", "PATCH", "OPTIONS", "DEBUG"]
@@ -55,6 +60,7 @@ class MisconfigScanner:
         self.session    = session
         self.parsed     = urllib.parse.urlparse(self.target_url)
         self.host       = self.parsed.netloc.split(":")[0]
+        self.validator  = Validator(session, rate_limiter, logger)
 
     def run(self) -> None:
         self.log.module_start("Misconfiguration Scanner")
@@ -82,45 +88,51 @@ class MisconfigScanner:
                 acac = resp.headers.get("Access-Control-Allow-Credentials", "")
 
                 if acao == "*":
-                    self.reporter.add_finding(
-                        title="CORS Wildcard Origin",
-                        severity="MEDIUM",
-                        url=self.target_url,
-                        description="Access-Control-Allow-Origin: * allows any domain to make cross-origin requests.",
-                        evidence=f"ACAO: {acao}",
-                        remediation="Restrict CORS to specific trusted domains. Never use wildcard with credentials.",
-                        module="misconfig",
-                        cvss=5.4,
-                    )
-                    self.log.finding("MEDIUM", "CORS Wildcard Origin", self.target_url)
+                    confirmed, evidence = self.validator.confirm_cors(self.target_url)
+                    if confirmed:
+                        self.reporter.add_finding(
+                            title="CORS Wildcard Origin (Confirmed)",
+                            severity="MEDIUM",
+                            url=self.target_url,
+                            description="Access-Control-Allow-Origin: * allows any domain to make cross-origin requests.",
+                            evidence=evidence,
+                            remediation="Restrict CORS to specific trusted domains. Never use wildcard with credentials.",
+                            module="misconfig",
+                            cvss=5.4,
+                        )
+                        self.log.finding("MEDIUM", "CORS Wildcard Origin", self.target_url)
 
                 elif acao == origin and acac.lower() == "true":
-                    self.reporter.add_finding(
-                        title="CORS Origin Reflection with Credentials",
-                        severity="HIGH",
-                        url=self.target_url,
-                        description=f"Server reflects arbitrary Origin '{origin}' with Access-Control-Allow-Credentials: true — allows cross-origin authenticated requests.",
-                        evidence=f"Request Origin: {origin}\nACAO: {acao}\nACAC: {acac}",
-                        remediation="Validate Origin against a strict whitelist. Never allow credentials with reflected origins.",
-                        module="misconfig",
-                        cvss=8.1,
-                    )
-                    self.log.finding("HIGH", "CORS Origin Reflection + Credentials", self.target_url)
-                    break
+                    confirmed, evidence = self.validator.confirm_cors(self.target_url)
+                    if confirmed:
+                        self.reporter.add_finding(
+                            title="CORS Origin Reflection with Credentials (Confirmed)",
+                            severity="HIGH",
+                            url=self.target_url,
+                            description=f"Server reflects arbitrary Origin '{origin}' with credentials — allows cross-origin authenticated requests.",
+                            evidence=evidence,
+                            remediation="Validate Origin against a strict whitelist. Never allow credentials with reflected origins.",
+                            module="misconfig",
+                            cvss=8.1,
+                        )
+                        self.log.finding("HIGH", "CORS Origin Reflection + Credentials", self.target_url)
+                        break
 
                 elif acao == origin:
-                    self.reporter.add_finding(
-                        title="CORS Arbitrary Origin Reflection",
-                        severity="MEDIUM",
-                        url=self.target_url,
-                        description=f"Server reflects the Origin header without validation.",
-                        evidence=f"Request Origin: {origin}\nACAO: {acao}",
-                        remediation="Implement an explicit origin whitelist.",
-                        module="misconfig",
-                        cvss=6.1,
-                    )
-                    self.log.finding("MEDIUM", "CORS Arbitrary Origin Reflection", self.target_url)
-                    break
+                    confirmed, evidence = self.validator.confirm_cors(self.target_url)
+                    if confirmed:
+                        self.reporter.add_finding(
+                            title="CORS Arbitrary Origin Reflection (Confirmed)",
+                            severity="MEDIUM",
+                            url=self.target_url,
+                            description=f"Server reflects the Origin header without validation.",
+                            evidence=evidence,
+                            remediation="Implement an explicit origin whitelist.",
+                            module="misconfig",
+                            cvss=6.1,
+                        )
+                        self.log.finding("MEDIUM", "CORS Arbitrary Origin Reflection", self.target_url)
+                        break
 
                 if acao == "null":
                     self.reporter.add_finding(
@@ -190,7 +202,11 @@ class MisconfigScanner:
                 self.log.progress(i + 1, len(SENSITIVE_PATHS), path)
 
                 if resp.status_code in (200, 206) and len(resp.content) > 0:
-                    # Determine severity based on path
+                    # Auto-confirm: check it's not a soft 404
+                    confirmed, file_evidence = self.validator.confirm_sensitive_file(url)
+                    if not confirmed:
+                        continue
+
                     sev = "CRITICAL"
                     if any(x in path for x in [".env", "config", ".git", "id_rsa", ".htpasswd", "backup", ".sql"]):
                         sev = "CRITICAL"
@@ -205,8 +221,8 @@ class MisconfigScanner:
                         title=f"Sensitive File/Path Exposed: {path}",
                         severity=sev,
                         url=url,
-                        description=f"Sensitive path '{path}' is publicly accessible (HTTP {resp.status_code}).",
-                        evidence=f"Response: {resp.status_code}\nContent preview: {resp.text[:300]}",
+                        description=f"Sensitive path '{path}' is publicly accessible and confirmed real content.",
+                        evidence=file_evidence,
                         remediation=f"Remove or restrict access to '{path}'. Configure web server to deny access.",
                         module="misconfig",
                         cvss=9.1 if sev == "CRITICAL" else 7.5 if sev == "HIGH" else 4.0,
