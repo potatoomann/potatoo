@@ -18,6 +18,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from core.rate_limiter import RateLimiter
 from core.reporter     import Reporter
 from core.logger       import Logger
+from core.bypasser    import Bypasser
 
 from modules.recon       import Recon
 from modules.crawler     import Crawler
@@ -55,6 +56,7 @@ class PotatooEngine:
         self.reporter = Reporter(self.target, output_path=self.output)
         self.rl       = self._configure_rate_limiter()
         self.session  = self._build_session()
+        self.bypasser = Bypasser(self.session, logger=self.logger)
 
         # State (populated during scan)
         self.tech_stack:  list = []
@@ -116,7 +118,10 @@ class PotatooEngine:
         self.logger.info(f"Target: {self.target}")
         self.logger.info(f"Scan level: {self.level}/5  |  Mode: {self.mode}")
         self.logger.info(f"Rate limiting: {self.rl.min_delay:.1f}–{self.rl.max_delay:.1f}s delay")
+        self.logger.info(f"Bypass engine: ON  |  UA rotation: every ~5 requests")
         print()
+        # Warm up session — collect cookies, set referrer, pass Cloudflare bot score
+        self.bypasser.warmup(self.target)
 
         try:
             if self.module_only:
