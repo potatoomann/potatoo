@@ -89,7 +89,7 @@ OPEN_REDIRECT_PAYLOADS = [
     "//evil.com",
     "https://evil.com",
     "//evil.com/%2F%2E%2E",
-    "\/\/evil.com",
+    "/\/evil.com",
     "//evil.com@target.com",
     "https:evil.com",
     "//google.com",
